@@ -92,7 +92,7 @@ class NetworkClient:
                 # Validate message for current state
                 is_valid, error_msg = self._validate_message_for_state(message)
                 if not is_valid:
-                    self.message_queue.put({"type": "error", "message": f"Invalid message for current state: {error_msg}"})
+                    self.message_queue.put({"type": "unknown", "message": {error_msg}})
                     return
 
                 data = json.dumps(message, ensure_ascii=False).encode()
@@ -153,7 +153,12 @@ class NetworkClient:
                     self.game_started = False
                 elif message["type"] == "error":
                     pass
+                elif message["type"] == "player_played_card":
+                    pass
+                elif message["type"] == "player_drawn_card":
+                    pass
                 else:
+                    print(message)
                     self._handle_invalid_message(message.get("message", "Server error"))
 
             except Exception as e:
@@ -199,18 +204,28 @@ class NetworkClient:
     def close(self):
         """Properly close the connection and clean up resources."""
         self.running = False
+
         if self.socket:
             try:
-                # Send disconnect message to server
-                disconnect_message = {
-                    "type": "disconnect",
-                    "name": self.player_name
-                }
-                self.send_message(disconnect_message)
+                if self.connected and self.player_name:
+                    # Send disconnect message to server only if we were connected
+                    disconnect_message = {
+                        "type": "disconnect",
+                        "name": self.player_name
+                    }
+                    self.send_message(disconnect_message)
+
                 self.socket.close()
             except:
                 pass
-            self.socket = None
+            finally:
+                self.socket = None
+
+        # Wait for threads to finish
+        if self.receive_thread and self.receive_thread.is_alive():
+            self.receive_thread.join(timeout=1.0)
+        if self.heartbeat_thread and self.heartbeat_thread.is_alive():
+            self.heartbeat_thread.join(timeout=1.0)
 
         # Clear the message queue
         while not self.message_queue.empty():
@@ -222,7 +237,12 @@ class NetworkClient:
         # Reset all client state
         self.connected = False
         self.waiting_for_player = False
-        self.invalid_message_count = 0
+        self.game_started = False
+        self.server_address = None
+        self.player_name = None
+        self.game_state = None
+        self.receive_thread = None
+        self.heartbeat_thread = None
 
     def _handle_disconnect(self):
         """Handle disconnection with automatic reconnection attempts."""
