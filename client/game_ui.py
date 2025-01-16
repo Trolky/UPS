@@ -5,6 +5,7 @@ import json
 import threading
 import ast
 
+
 class CardGameGUI(tk.Frame):
     def __init__(self, parent, controller, name: str):
         """Initializes the Card Game GUI for a single player."""
@@ -18,6 +19,7 @@ class CardGameGUI(tk.Frame):
 
         # UI components
         self.suit_buttons = []
+        self.is_active = True  # Track if GUI is active
         self._setup_game_ui()
 
         if self.controller.network_client and self.controller.network_client.game_state:
@@ -27,7 +29,6 @@ class CardGameGUI(tk.Frame):
         self.listen_thread = threading.Thread(target=self.listen_for_messages)
         self.listen_thread.daemon = True
         self.listen_thread.start()
-
 
     def _setup_game_ui(self):
         """Set up the main game UI components."""
@@ -55,47 +56,41 @@ class CardGameGUI(tk.Frame):
         self.log_area = tk.Text(self.info_frame, width=40, height=10, bg="lightyellow", state="disabled")
         self.log_area.grid(row=4, column=5)
 
-    def restart_game(self):
-        """Handle restarting the game."""
-
-        # Reset labels
-        self.deck_info_label.config(text="Deck: 0 cards left")
-        self.discard_info_label.config(text="Discard Pile: 0 cards")
-        self.discard_pile_button.config(text="Discard Pile")
-        self.label_current_player.config(text="Current player: None")
-
-        # Clear log area
-        self.log_area.config(state="normal")
-        self.log_area.delete(1.0, tk.END)
-        self.log_area.config(state="disabled")
-
-        # Reset previous hand
-        self.previous_hand = None
-
-        # Show main menu
-        self.controller.show_frame("MainMenu")
-
-        # Reset network client
-        if self.controller.network_client:
-            self.controller.network_client.close()
-            self.controller.network_client = None
+    def cleanup(self):
+        """Clean up resources before destroying the frame."""
+        self.is_active = False
+        # Clear all buttons
+        for btn in self.suit_buttons:
+            btn.destroy()
+        self.suit_buttons = []
 
     def log_message(self, message: str):
         """Log messages to the log area."""
-        self.log_area.config(state="normal")
-        self.log_area.insert(tk.END, message + "\n")
-        self.log_area.see(tk.END)
-        self.log_area.config(state="disabled")
+        if self.is_active and hasattr(self, 'log_area'):
+            try:
+                self.log_area.config(state="normal")
+                self.log_area.insert(tk.END, message + "\n")
+                self.log_area.see(tk.END)
+                self.log_area.config(state="disabled")
+            except tk.TclError:
+                # Widget was destroyed, ignore the error
+                pass
 
     def create_hand_buttons(self, hand):
-        """Create buttons for Player 1's hand."""
+        """Create buttons for Player's hand."""
+        if not self.is_active:
+            return
+
         max_columns = 4
         button_height = 5
         button_width = 10
 
         # Clear existing buttons first
         for btn in self.suit_buttons:
-            btn.destroy()
+            try:
+                btn.destroy()
+            except tk.TclError:
+                pass  # Button was already destroyed
 
         # Reset the button list
         self.suit_buttons = []
@@ -108,29 +103,31 @@ class CardGameGUI(tk.Frame):
             card_display = f"{card['value']}{card['suit']}"
 
             # Create button with card details
-            btn = tk.Button(self, text=card_display, width=button_width, height=button_height,
-                            command=lambda c=card_display: self.play_card(c))
-            btn.grid(row=current_row, column=current_column, padx=10, pady=10)
-
-            # Add button to the list for future destruction
-            self.suit_buttons.append(btn)
+            try:
+                btn = tk.Button(self, text=card_display, width=button_width, height=button_height,
+                                command=lambda c=card_display: self.play_card(c))
+                btn.grid(row=current_row, column=current_column, padx=10, pady=10)
+                self.suit_buttons.append(btn)
+            except tk.TclError:
+                pass  # Frame was destroyed, ignore the error
 
     def play_card(self, card: str):
         """Handles the logic when a player plays a card."""
-        if self.controller.network_client and self.controller.network_client.connected:
+        if self.is_active and self.controller.network_client and self.controller.network_client.connected:
             self.controller.network_client.play_card(card)
 
     def draw_card(self):
         """Handles drawing a card for the current player."""
-        if self.controller.network_client and self.controller.network_client.connected:
+        if self.is_active and self.controller.network_client and self.controller.network_client.connected:
             self.controller.network_client.draw_card()
 
     def listen_for_messages(self):
         """Listen for messages from the server (game state updates, etc.)."""
-        while True:
+        while self.is_active:
             try:
                 message = self.controller.network_client.get_next_message()
-                if message:
+                print(message)
+                if message and self.is_active:
                     # Validate message structure
                     if not isinstance(message, dict) or "type" not in message:
                         print("Received malformed message, disconnecting...")
@@ -159,50 +156,58 @@ class CardGameGUI(tk.Frame):
                     elif message["type"] == "connect_ack":
                         pass
                     else:
-                        print("Unknown message type received, disconnecting...")
                         self.controller.network_client.close()
                         self.controller.show_frame("MainMenu")
-                        messagebox.showerror("Error", "Connection lost due to invalid message type either from server or client")
+                        messagebox.showerror("Error", "Connection lost due to invalid message type")
                         break
             except json.JSONDecodeError:
-                print("Failed to decode message, disconnecting...")
-                self.controller.network_client.close()
-                self.controller.show_frame("MainMenu")
-                messagebox.showerror("Error", "Connection lost due to invalid message format")
+                if self.is_active:
+                    self.controller.network_client.close()
+                    self.controller.show_frame("MainMenu")
+                    messagebox.showerror("Error", "Connection lost due to invalid message format")
                 break
             except Exception as e:
-                print(f"Error in message handling: {e}")
-                self.controller.network_client.close()
-                self.controller.show_frame("MainMenu")
-                messagebox.showerror("Error", f"Connection lost due to error: {str(e)}")
+                if self.is_active:
+                    self.controller.network_client.close()
+                    self.controller.show_frame("MainMenu")
+                    messagebox.showerror("Error", f"Connection lost due to error: {str(e)}")
                 break
 
     def update_game_state(self, game_state: dict):
         """Update the game state in the UI based on the server's response."""
-        self.deck_info_label.config(text=f"Deck: {game_state['deck_size']} cards left")
-        # Update discard pile with the top card
-        top_card = game_state.get('top_card')
-        if isinstance(top_card, str):
-            # If it's a string, attempt to parse it as a dictionary
-            try:
-                top_card = ast.literal_eval(top_card)
-            except (ValueError, SyntaxError):
-                top_card = {}  # Default to an empty dictionary if parsing fails
-        elif not isinstance(top_card, dict):
-            top_card = {}
-        discard_pile_size = game_state.get("discard_pile", [])
-        self.discard_info_label.config(text=f"Discard Pile: {discard_pile_size} cards")
-        self.discard_pile_button.config(text=f"{top_card.get('value')}"
-                                             f"{top_card.get('suit')}")
+        if not self.is_active:
+            return
 
-        self.label_current_player.config(text=f"Current player: {game_state['current_player']}")
+        try:
+            self.deck_info_label.config(text=f"Deck: {game_state['deck_size']} cards left")
+            # Update discard pile with the top card
+            top_card = game_state.get('top_card')
+            if isinstance(top_card, str):
+                # If it's a string, attempt to parse it as a dictionary
+                try:
+                    top_card = ast.literal_eval(top_card)
+                except (ValueError, SyntaxError):
+                    top_card = {}  # Default to an empty dictionary if parsing fails
+            elif not isinstance(top_card, dict):
+                top_card = {}
+            discard_pile_size = game_state.get("discard_pile", [])
+            self.discard_info_label.config(text=f"Discard Pile: {discard_pile_size} cards")
+            self.discard_pile_button.config(text=f"{top_card.get('value')}"
+                                                 f"{top_card.get('suit')}")
 
-        hand = game_state.get(self.player.name, [])
-        if hand != self.previous_hand:
-            self.create_hand_buttons(hand)
-            self.previous_hand = hand
+            self.label_current_player.config(text=f"Current player: {game_state['current_player']}")
+
+            hand = game_state.get(self.player.name, [])
+            if hand != self.previous_hand:
+                self.create_hand_buttons(hand)
+                self.previous_hand = hand
+        except tk.TclError:
+            # Widget was destroyed, ignore the error
+            pass
 
     def announce_winner(self, message: str):
         """Announce the winner and reset the game."""
-        messagebox.showinfo(message)
-        self.controller.show_frame("MainMenu")
+        if self.is_active:
+            messagebox.showinfo("Game Over", message)
+            self.cleanup()
+            self.controller.show_frame("MainMenu")

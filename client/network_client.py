@@ -3,7 +3,7 @@ import json
 import threading
 import queue
 import time
-
+import select
 
 class NetworkClient:
     def __init__(self):
@@ -98,7 +98,6 @@ class NetworkClient:
                 data = json.dumps(message, ensure_ascii=False).encode()
                 self.socket.sendto(data, self.server_address)
         except Exception as e:
-            print(f"Error sending message: {e}")
             self.connected = False
 
     def _receive_messages(self):
@@ -106,6 +105,7 @@ class NetworkClient:
             try:
                 if not self.socket:
                     break
+
                 data, _ = self.socket.recvfrom(4096)
 
                 # Validate message format
@@ -158,18 +158,15 @@ class NetworkClient:
                 elif message["type"] == "player_drawn_card":
                     pass
                 else:
-                    print(message)
                     self._handle_invalid_message(message.get("message", "Server error"))
 
             except Exception as e:
-                print(f"Error receiving message: {e}")
                 if self.running:
                     if not self._handle_disconnect():
                         break
 
     def _handle_invalid_message(self, error_message):
         """Handle invalid messages and track their count"""
-        print(f"Invalid message received. Disconnecting...")
         self.message_queue.put({
             "type": "unknown",
             "message": "Disconnected due to invalid message"
