@@ -1,4 +1,5 @@
 import tkinter as tk
+import time
 from tkinter import messagebox
 from player import Player
 import json
@@ -160,6 +161,8 @@ class CardGameGUI(tk.Frame):
                         self.controller.show_frame("MainMenu")
                         messagebox.showerror("Error", "Connection lost due to invalid message type")
                         break
+                else:
+                    time.sleep(0.05)
             except json.JSONDecodeError:
                 if self.is_active:
                     self.controller.network_client.close()
@@ -172,6 +175,7 @@ class CardGameGUI(tk.Frame):
                     self.controller.show_frame("MainMenu")
                     messagebox.showerror("Error", f"Connection lost due to error: {str(e)}")
                 break
+            time.sleep(0.05)
 
     def update_game_state(self, game_state: dict):
         """Update the game state in the UI based on the server's response."""

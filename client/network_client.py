@@ -3,7 +3,9 @@ import json
 import threading
 import queue
 import time
+
 import select
+
 
 class NetworkClient:
     def __init__(self):
@@ -21,6 +23,7 @@ class NetworkClient:
         self.max_reconnect_attempts = 10
         self.reconnect_delay = 5  # seconds
         self.game_started = False
+        self.disconnected = False
 
     def _validate_message_for_state(self, message):
         """Validate if the message is appropriate for the current game state"""
@@ -58,6 +61,7 @@ class NetworkClient:
         self.player_name = player_name
         self.running = True
         self.connected = False
+        self.disconnected = False
         self.waiting_for_player = False
 
         connect_message = {
@@ -78,7 +82,7 @@ class NetworkClient:
 
     def _send_heartbeat(self):
         while self.running:
-            if self.connected:
+            if self.connected and not self.disconnected:
                 heartbeat_message = {
                     "type": "heartbeat",
                     "name": self.player_name
@@ -129,6 +133,7 @@ class NetworkClient:
 
                 if message["type"] == "connect_ack":
                     self.connected = True
+                    self.disconnected = False
                     self.waiting_for_player = message.get("waiting_for_player", False)
                     if not self.waiting_for_player:
                         self.game_state = message
@@ -136,6 +141,7 @@ class NetworkClient:
                 elif message["type"] == "game_state_update":
                     self.waiting_for_player = False
                     self.connected = True
+                    self.disconnected = False
                     self.game_state = message
                     self.game_started = True
                 elif message["type"] == "name_taken":
@@ -164,6 +170,7 @@ class NetworkClient:
                 if self.running:
                     if not self._handle_disconnect():
                         break
+            time.sleep(0.05)
 
     def _handle_invalid_message(self, error_message):
         """Handle invalid messages and track their count"""
@@ -240,38 +247,46 @@ class NetworkClient:
         self.game_state = None
         self.receive_thread = None
         self.heartbeat_thread = None
+        self.disconnected = False
 
     def _handle_disconnect(self):
         """Handle disconnection with automatic reconnection attempts."""
-        if not self.running:
+        if not self.running or self.disconnected:
             return False
 
+        self.disconnected = True
+        print("Connection lost, attempting to reconnect...")
+
         while self.reconnect_attempts < self.max_reconnect_attempts and self.running:
-            print(
-                f"Connection lost. Attempting to reconnect ({self.reconnect_attempts + 1}/{self.max_reconnect_attempts})...")
+            print(f"Reconnection attempt {self.reconnect_attempts + 1}/{self.max_reconnect_attempts}")
             try:
                 # Clean up socket and attempt to reconnect
-                self.close()
+                if self.socket:
+                    self.socket.close()
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+                # Send reconnect message
                 connect_message = {
                     "type": "connect",
                     "name": self.player_name
                 }
-                self.send_message(connect_message)
+                data = json.dumps(connect_message).encode()
+                self.socket.sendto(data, self.server_address)
 
                 # Wait for server response
-                try:
+                ready = select.select([self.socket], [], [], 2.0)  # 2 second timeout
+                if ready[0]:
                     data, _ = self.socket.recvfrom(4096)
                     message = json.loads(data.decode('utf-8'))
-                    if message["type"] == "connect_ack" or message["type"] == "game_state_update":
+
+                    if message["type"] in ["connect_ack", "game_state_update"]:
                         print("Reconnection successful!")
                         self.connected = True
+                        self.disconnected = False
                         self.reconnect_attempts = 0
                         self.game_state = message
-                        self.message_queue.put(message)  # Put message in queue for UI update
+                        self.message_queue.put(message)
                         return True
-                except Exception as e:
-                    print(f"Reconnect attempt failed: {e}")
 
             except Exception as e:
                 print(f"Reconnection attempt failed: {e}")
