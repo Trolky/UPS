@@ -23,7 +23,6 @@ class NetworkClient:
         self.max_reconnect_attempts = 10
         self.reconnect_delay = 5  # seconds
         self.game_started = False
-        self.disconnected = False
 
     def _validate_message_for_state(self, message):
         """Validate if the message is appropriate for the current game state"""
@@ -82,7 +81,7 @@ class NetworkClient:
 
     def _send_heartbeat(self):
         while self.running:
-            if self.connected and not self.disconnected:
+            if self.connected:
                 heartbeat_message = {
                     "type": "heartbeat",
                     "name": self.player_name
@@ -133,7 +132,6 @@ class NetworkClient:
 
                 if message["type"] == "connect_ack":
                     self.connected = True
-                    self.disconnected = False
                     self.waiting_for_player = message.get("waiting_for_player", False)
                     if not self.waiting_for_player:
                         self.game_state = message
@@ -141,7 +139,6 @@ class NetworkClient:
                 elif message["type"] == "game_state_update":
                     self.waiting_for_player = False
                     self.connected = True
-                    self.disconnected = False
                     self.game_state = message
                     self.game_started = True
                 elif message["type"] == "name_taken":
@@ -187,7 +184,7 @@ class NetworkClient:
             return None
 
     def play_card(self, card):
-        if self.waiting_for_player:
+        if not self.waiting_for_player:
             return
         message = {
             "type": "play_card",
@@ -197,7 +194,7 @@ class NetworkClient:
         self.send_message(message)
 
     def draw_card(self):
-        if self.waiting_for_player:
+        if not self.waiting_for_player:
             return
         message = {
             "type": "draw_card",
@@ -247,14 +244,13 @@ class NetworkClient:
         self.game_state = None
         self.receive_thread = None
         self.heartbeat_thread = None
-        self.disconnected = False
 
     def _handle_disconnect(self):
         """Handle disconnection with automatic reconnection attempts."""
-        if not self.running or self.disconnected:
+        if not self.running:
+            print("asd")
             return False
 
-        self.disconnected = True
         print("Connection lost, attempting to reconnect...")
 
         while self.reconnect_attempts < self.max_reconnect_attempts and self.running:
@@ -282,7 +278,6 @@ class NetworkClient:
                     if message["type"] in ["connect_ack", "game_state_update"]:
                         print("Reconnection successful!")
                         self.connected = True
-                        self.disconnected = False
                         self.reconnect_attempts = 0
                         self.game_state = message
                         self.message_queue.put(message)
