@@ -128,7 +128,7 @@ void game_server::check_disconnections() {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player1->last_seen).count();
                 if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player1->disconnected) {
-                    std::cout << "Player "+ lobby->player1->name + " has disconnected."
+                    std::cout << "Player "+ lobby->player1->name + " has disconnected." << std::endl;
                     lobby->player1->disconnected = true;
                     notify_disconnection(lobby->player1, lobby);
                 }
@@ -138,8 +138,8 @@ void game_server::check_disconnections() {
             if (lobby->player2) {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player2->last_seen).count();
-                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected) {
-                     std::cout << "Player "+ lobby->player2->name + " has disconnected."
+                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected){
+                     std::cout << "Player "+ lobby->player2->name + " has disconnected."  << std::endl;
                     lobby->player2->disconnected = true;
                     notify_disconnection(lobby->player2, lobby);
                 }
@@ -218,8 +218,6 @@ void game_server::handle_reconnection(const std::string& player_name, const sock
     player->disconnected = false;
     player->last_seen = std::chrono::steady_clock::now();
 
-    notify_reconnection(player, lobby);
-
     // Unpause the lobby if both players are now connected
     if (lobby->player1 && lobby->player2 &&
         !lobby->player1->disconnected && !lobby->player2->disconnected) {
@@ -242,15 +240,7 @@ void game_server::handle_reconnection(const std::string& player_name, const sock
 
     send_to_client(state_msg, new_addr);
 
-    // Notify the other player about the reconnection
-    Player* other_player = (lobby->player1->name == player_name) ? lobby->player2 : lobby->player1;
-    if (other_player && !other_player->disconnected) {
-        SimpleJSON notify_msg;
-        notify_msg.assign_string("type", "player_reconnected");
-        notify_msg.assign_string("player", player_name);
-        notify_msg.assign_string("message", "Player " + player_name + " has reconnected.");
-        send_to_client(notify_msg, other_player->address);
-    }
+    notify_reconnection(player, lobby);
 
     std::cout << "Player " << player_name << " reconnected successfully.\n";
 }
