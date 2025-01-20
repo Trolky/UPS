@@ -128,6 +128,7 @@ void game_server::check_disconnections() {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player1->last_seen).count();
                 if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player1->disconnected) {
+                    std::cout << "Player "+ lobby->player1->name + " has disconnected."
                     lobby->player1->disconnected = true;
                     notify_disconnection(lobby->player1, lobby);
                 }
@@ -138,6 +139,7 @@ void game_server::check_disconnections() {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player2->last_seen).count();
                 if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected) {
+                     std::cout << "Player "+ lobby->player2->name + " has disconnected."
                     lobby->player2->disconnected = true;
                     notify_disconnection(lobby->player2, lobby);
                 }
@@ -215,6 +217,8 @@ void game_server::handle_reconnection(const std::string& player_name, const sock
     player->address = new_addr;
     player->disconnected = false;
     player->last_seen = std::chrono::steady_clock::now();
+
+    notify_reconnection(player, lobby);
 
     // Unpause the lobby if both players are now connected
     if (lobby->player1 && lobby->player2 &&
@@ -311,8 +315,18 @@ void game_server::handle_message(const SimpleJSON& msg, const sockaddr_in& clien
         }
     } else if (msg["type"] == "heartbeat") {
         std::string player_name = msg["name"];
-        if (players.count(player_name) > 0) {
-            players[player_name]->last_seen = std::chrono::steady_clock::now();
+        auto it = players.find(player_name);
+        if (it != players.end()) {
+            Player* player = it->second;
+            player->last_seen = std::chrono::steady_clock::now();
+            
+            // If player was disconnected, handle reconnection
+            if (player->disconnected) {
+                handle_reconnection(player_name, client_addr);
+            } else {
+                // Update player's address in case it changed
+                player->address = client_addr;
+            }
         }
     } else if (msg["type"] == "play_card" || msg["type"] == "draw_card") {
         std::string player_name = msg["player_name"];
