@@ -182,7 +182,7 @@ class NetworkClient:
             return None
 
     def play_card(self, card):
-        if not self.waiting_for_player:
+        if self.waiting_for_player:
             return
         message = {
             "type": "play_card",
@@ -192,7 +192,7 @@ class NetworkClient:
         self.send_message(message)
 
     def draw_card(self):
-        if not self.waiting_for_player:
+        if self.waiting_for_player:
             return
         message = {
             "type": "draw_card",
@@ -253,27 +253,38 @@ class NetworkClient:
                 f"Connection lost. Attempting to reconnect ({self.reconnect_attempts + 1}/{self.max_reconnect_attempts})...")
             try:
                 # Clean up socket and attempt to reconnect
-                self.close()
+                if self.socket:
+                    self.socket.close()
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+                # Send reconnect message
                 connect_message = {
                     "type": "connect",
                     "name": self.player_name
                 }
                 self.send_message(connect_message)
 
-                # Wait for server response
+                # Wait for server response with timeout
+                self.socket.settimeout(5.0)  # 5 second timeout
                 try:
                     data, _ = self.socket.recvfrom(4096)
                     message = json.loads(data.decode('utf-8'))
-                    if message["type"] == "connect_ack" or message["type"] == "game_state_update":
+
+                    if message["type"] in ["connect_ack", "game_state_update"]:
                         print("Reconnection successful!")
+                        self.socket.settimeout(None)  # Remove timeout
                         self.connected = True
                         self.reconnect_attempts = 0
                         self.game_state = message
-                        self.message_queue.put(message)  # Put message in queue for UI update
+                        self.message_queue.put(message)
                         return True
-                except Exception as e:
-                    print(f"Reconnect attempt failed: {e}")
+                    elif message["type"] == "error":
+                        print(f"Reconnection failed: {message.get('message', 'Unknown error')}")
+
+                except socket.timeout:
+                    print("Reconnection attempt timed out")
+                except json.JSONDecodeError:
+                    print("Invalid response from server")
 
             except Exception as e:
                 print(f"Reconnection attempt failed: {e}")
@@ -289,3 +300,5 @@ class NetworkClient:
             })
             self.connected = False
             return False
+
+        return False
