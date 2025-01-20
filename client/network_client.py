@@ -4,8 +4,6 @@ import threading
 import queue
 import time
 
-import select
-
 
 class NetworkClient:
     def __init__(self):
@@ -248,40 +246,34 @@ class NetworkClient:
     def _handle_disconnect(self):
         """Handle disconnection with automatic reconnection attempts."""
         if not self.running:
-            print("asd")
             return False
 
-        print("Connection lost, attempting to reconnect...")
-
         while self.reconnect_attempts < self.max_reconnect_attempts and self.running:
-            print(f"Reconnection attempt {self.reconnect_attempts + 1}/{self.max_reconnect_attempts}")
+            print(
+                f"Connection lost. Attempting to reconnect ({self.reconnect_attempts + 1}/{self.max_reconnect_attempts})...")
             try:
                 # Clean up socket and attempt to reconnect
-                if self.socket:
-                    self.socket.close()
+                self.close()
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-                # Send reconnect message
                 connect_message = {
                     "type": "connect",
                     "name": self.player_name
                 }
-                data = json.dumps(connect_message).encode()
-                self.socket.sendto(data, self.server_address)
+                self.send_message(connect_message)
 
                 # Wait for server response
-                ready = select.select([self.socket], [], [], 2.0)  # 2 second timeout
-                if ready[0]:
+                try:
                     data, _ = self.socket.recvfrom(4096)
                     message = json.loads(data.decode('utf-8'))
-
-                    if message["type"] in ["connect_ack", "game_state_update"]:
+                    if message["type"] == "connect_ack" or message["type"] == "game_state_update":
                         print("Reconnection successful!")
                         self.connected = True
                         self.reconnect_attempts = 0
                         self.game_state = message
-                        self.message_queue.put(message)
+                        self.message_queue.put(message)  # Put message in queue for UI update
                         return True
+                except Exception as e:
+                    print(f"Reconnect attempt failed: {e}")
 
             except Exception as e:
                 print(f"Reconnection attempt failed: {e}")
