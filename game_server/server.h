@@ -54,6 +54,9 @@ private:
     Lobby* find_player_lobby(const std::string& player_name);
     std::string remove_quotes(const std::string& str);
     void handle_reconnection(const std::string& player_name, const sockaddr_in& new_addr);
+    bool is_reconnection_valid(const std::string& player_name, const sockaddr_in& new_addr);
+    void notify_reconnection(Player* player, Lobby* lobby);
+    void notify_disconnection(Player* player, Lobby* lobby);
 
 public:
     game_server(const std::string& ip, int port);

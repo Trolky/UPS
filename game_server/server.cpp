@@ -82,68 +82,93 @@ Lobby* game_server::find_player_lobby(const std::string& player_name) {
     return nullptr;
 }
 
+bool game_server::is_reconnection_valid(const std::string& player_name, const sockaddr_in& new_addr) {
+    auto it = players.find(player_name);
+    return (it != players.end() && it->second->disconnected);
+}
+
+void game_server::notify_reconnection(Player* player, Lobby* lobby) {
+    if (!lobby || !player) return;
+    
+    Player* other_player = (lobby->player1 == player) ? lobby->player2 : lobby->player1;
+    if (other_player && !other_player->disconnected) {
+        SimpleJSON notify_msg;
+        notify_msg.assign_string("type", "player_reconnected");
+        notify_msg.assign_string("player", player->name);
+        notify_msg.assign_string("message", "Player " + player->name + " has reconnected.");
+        send_to_client(notify_msg, other_player->address);
+    }
+}
+
+void game_server::notify_disconnection(Player* player, Lobby* lobby) {
+    if (!lobby || !player) return;
+    
+    Player* other_player = (lobby->player1 == player) ? lobby->player2 : lobby->player1;
+    if (other_player && !other_player->disconnected) {
+        SimpleJSON disconnect_msg;
+        disconnect_msg.assign_string("type", "player_disconnected");
+        disconnect_msg.assign_string("player", player->name);
+        disconnect_msg.assign_string("message", "Player " + player->name + " has disconnected.");
+        send_to_client(disconnect_msg, other_player->address);
+    }
+}
+
 void game_server::check_disconnections() {
     while (running) {
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        std::this_thread::sleep_for(std::chrono::seconds(5)); // Changed from 10 to 5 seconds for faster detection
         std::lock_guard<std::mutex> lock(mtx);
 
         auto now = std::chrono::steady_clock::now();
 
         for (auto it = lobbies.begin(); it != lobbies.end(); ) {
             Lobby* lobby = *it;
+            
+            // Check player1 disconnection
+            if (lobby->player1) {
+                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - lobby->player1->last_seen).count();
+                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player1->disconnected) {
+                    lobby->player1->disconnected = true;
+                    notify_disconnection(lobby->player1, lobby);
+                }
+            }
+
+            // Check player2 disconnection
+            if (lobby->player2) {
+                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - lobby->player2->last_seen).count();
+                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected) {
+                    lobby->player2->disconnected = true;
+                    notify_disconnection(lobby->player2, lobby);
+                }
+            }
+
+            // Handle long disconnections
+            bool should_delete = false;
             Player* disconnected_player = nullptr;
             Player* other_player = nullptr;
 
-            if (lobby->player1) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(now - lobby->player1->last_seen).count();
-                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player1->disconnected) {
-                    std::cout << lobby->player1->name+ " has disconnected." << std::endl;
-                    lobby->player1->disconnected = true;;
-
-                    if (lobby->player2 && !lobby->player2->disconnected) {
-                        SimpleJSON disconnect_msg;
-                        disconnect_msg.assign_string("type", "player_disconnected");
-                        disconnect_msg.assign_string("player", lobby->player1->name);
-                        disconnect_msg.assign_string("message", "Player " + lobby->player1->name + " has disconnected.");
-                        send_to_client(disconnect_msg, lobby->player2->address);
-                    }
-                }
-            }
-
-            if (lobby->player2) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(now - lobby->player2->last_seen).count();
-                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected) {
-                    std::cout << lobby->player2->name+ " has disconnected." << std::endl;
-                    lobby->player2->disconnected = true;
-
-                    if (lobby->player1 && !lobby->player1->disconnected) {
-                        SimpleJSON disconnect_msg;
-                        disconnect_msg.assign_string("type", "player_disconnected");
-                        disconnect_msg.assign_string("player", lobby->player2->name);
-                        disconnect_msg.assign_string("message", "Player " + lobby->player2->name + " has disconnected.");
-                        send_to_client(disconnect_msg, lobby->player1->address);
-                    }
-                }
-            }
-
             if (lobby->player1 && lobby->player1->disconnected) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(now - lobby->player1->last_seen).count();
+                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - lobby->player1->last_seen).count();
                 if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
                     disconnected_player = lobby->player1;
                     other_player = lobby->player2;
+                    should_delete = true;
                 }
             }
 
             if (lobby->player2 && lobby->player2->disconnected) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(now - lobby->player2->last_seen).count();
+                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - lobby->player2->last_seen).count();
                 if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
                     disconnected_player = lobby->player2;
                     other_player = lobby->player1;
+                    should_delete = true;
                 }
             }
 
-            if (disconnected_player) {
-                // Notify the other player of game termination
+            if (should_delete) {
                 if (other_player && !other_player->disconnected) {
                     SimpleJSON game_over_msg;
                     game_over_msg.assign_string("type", "game_over");
@@ -152,18 +177,18 @@ void game_server::check_disconnections() {
                     send_to_client(game_over_msg, other_player->address);
                 }
 
-                std::cout << "One player has been disconnected for too long. Disconnecting other player and erasing lobby." << std::endl;
-                players.erase(disconnected_player->name);
+                if (disconnected_player) {
+                    players.erase(disconnected_player->name);
+                    delete disconnected_player;
+                }
                 if (other_player) {
                     players.erase(other_player->name);
+                    delete other_player;
                 }
-                delete disconnected_player;
-                delete other_player;
                 delete lobby;
                 it = lobbies.erase(it);
                 continue;
             }
-
             ++it;
         }
     }
