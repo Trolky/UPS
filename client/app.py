@@ -1,6 +1,6 @@
-from main_menu import MainMenu
+from src.main_menu import MainMenu
 import tkinter as tk
-from game_ui import CardGameGUI
+from src.game_ui import CardGameGUI
 
 
 class App(tk.Tk):

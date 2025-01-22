@@ -127,7 +127,6 @@ class CardGameGUI(tk.Frame):
         while self.is_active:
             try:
                 message = self.controller.network_client.get_next_message()
-                print(message)
                 if message and self.is_active:
                     # Validate message structure
                     if not isinstance(message, dict) or "type" not in message:

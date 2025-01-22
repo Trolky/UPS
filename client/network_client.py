@@ -18,39 +18,36 @@ class NetworkClient:
         self.heartbeat_thread = None
         self.server_address = None
         self.reconnect_attempts = 0
-        self.max_reconnect_attempts = 10
+        self.max_reconnect_attempts = 3
         self.reconnect_delay = 5  # seconds
         self.game_started = False
+        self.disconnected = False
 
     def _validate_message_for_state(self, message):
         """Validate if the message is appropriate for the current game state"""
         message_type = message.get("type", "")
+        if not self.disconnected:
+            if self.game_started:
+                # Messages that shouldn't be sent during an active game
+                if message_type in ["connect", "connect_ack"]:
+                    return False, "Cannot send connection messages during active game"
+            else:
+                # Messages that shouldn't be sent before game starts
+                if message_type in ["play_card", "draw_card"]:
+                    return False, "Cannot perform game actions before game starts"
 
-        if self.game_started:
-            # Messages that shouldn't be sent during an active game
-            if message_type in ["connect", "connect_ack"]:
-                return False, "Cannot send connection messages during active game"
-        else:
-            # Messages that shouldn't be sent before game starts
-            if message_type in ["play_card", "draw_card"]:
-                return False, "Cannot perform game actions before game starts"
+            # Add validation for specific game states
+            if message_type == "play_card" and self.waiting_for_player:
+                return False, "Cannot play cards while waiting for player"
 
-        # Add validation for specific game states
-        if message_type == "play_card" and self.waiting_for_player:
-            return False, "Cannot play cards while waiting for player"
-
-        if message_type == "draw_card" and self.waiting_for_player:
-            return False, "Cannot draw cards while waiting for player"
-
+            if message_type == "draw_card" and self.waiting_for_player:
+                return False, "Cannot draw cards while waiting for player"
         return True, ""
 
     def connect(self, ip, port, player_name):
         # Clean up any existing connection
         if self.socket:
             self.close()
-
-        # Reset invalid message counter on new connection
-        self.invalid_message_count = 0
 
         # Create new socket and connection
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -98,6 +95,7 @@ class NetworkClient:
 
                 data = json.dumps(message, ensure_ascii=False).encode()
                 self.socket.sendto(data, self.server_address)
+
         except Exception as e:
             self.connected = False
 
@@ -247,7 +245,7 @@ class NetworkClient:
         """Handle disconnection with automatic reconnection attempts."""
         if not self.running:
             return False
-
+        self.disconnected = True
         while self.reconnect_attempts < self.max_reconnect_attempts and self.running:
             print(
                 f"Connection lost. Attempting to reconnect ({self.reconnect_attempts + 1}/{self.max_reconnect_attempts})...")
@@ -276,6 +274,7 @@ class NetworkClient:
                         self.connected = True
                         self.reconnect_attempts = 0
                         self.game_state = message
+                        self.disconnected = False
                         self.message_queue.put(message)
                         return True
                     elif message["type"] == "error":
@@ -295,10 +294,11 @@ class NetworkClient:
         if self.reconnect_attempts >= self.max_reconnect_attempts:
             print("Failed to reconnect after maximum attempts")
             self.message_queue.put({
-                "type": "error",
+                "type": "unknown",
                 "message": "Connection lost and could not reconnect. Please restart the game."
             })
             self.connected = False
+            self.reconnect_attempts = 0
             return False
 
         return False
