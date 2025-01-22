@@ -115,22 +115,33 @@ void game_server::notify_disconnection(Player* player, Lobby* lobby) {
 
 void game_server::check_disconnections() {
     while (running) {
-        std::this_thread::sleep_for(std::chrono::seconds(5)); // Changed from 10 to 5 seconds for faster detection
+        std::this_thread::sleep_for(std::chrono::seconds(5)); // Check every 5 seconds
         std::lock_guard<std::mutex> lock(mtx);
 
         auto now = std::chrono::steady_clock::now();
 
         for (auto it = lobbies.begin(); it != lobbies.end(); ) {
             Lobby* lobby = *it;
-            
+            bool should_delete = false;
+            Player* disconnected_player = nullptr;
+            Player* other_player = nullptr;
+
             // Check player1 disconnection
             if (lobby->player1) {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player1->last_seen).count();
+
+                // If player is waiting alone and disconnects, remove after short threshold
                 if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player1->disconnected) {
-                    std::cout << "Player "+ lobby->player1->name + " has disconnected." << std::endl;
+                    std::cout << "Player " + lobby->player1->name + " has disconnected." << std::endl;
                     lobby->player1->disconnected = true;
                     notify_disconnection(lobby->player1, lobby);
+
+                    // If player was alone in lobby, mark for immediate deletion
+                    if (!lobby->player2) {
+                        disconnected_player = lobby->player1;
+                        should_delete = true;
+                    }
                 }
             }
 
@@ -138,35 +149,33 @@ void game_server::check_disconnections() {
             if (lobby->player2) {
                 auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
                     now - lobby->player2->last_seen).count();
-                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected){
-                     std::cout << "Player "+ lobby->player2->name + " has disconnected."  << std::endl;
+                if (time_since_seen > SHORT_DISCONNECT_THRESHOLD && !lobby->player2->disconnected) {
+                    std::cout << "Player " + lobby->player2->name + " has disconnected." << std::endl;
                     lobby->player2->disconnected = true;
                     notify_disconnection(lobby->player2, lobby);
                 }
             }
 
-            // Handle long disconnections
-            bool should_delete = false;
-            Player* disconnected_player = nullptr;
-            Player* other_player = nullptr;
-
-            if (lobby->player1 && lobby->player1->disconnected) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
-                    now - lobby->player1->last_seen).count();
-                if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
-                    disconnected_player = lobby->player1;
-                    other_player = lobby->player2;
-                    should_delete = true;
+            // For full lobbies, handle long disconnections
+            if (!should_delete && lobby->is_full()) {
+                if (lobby->player1 && lobby->player1->disconnected) {
+                    auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                        now - lobby->player1->last_seen).count();
+                    if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
+                        disconnected_player = lobby->player1;
+                        other_player = lobby->player2;
+                        should_delete = true;
+                    }
                 }
-            }
 
-            if (lobby->player2 && lobby->player2->disconnected) {
-                auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
-                    now - lobby->player2->last_seen).count();
-                if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
-                    disconnected_player = lobby->player2;
-                    other_player = lobby->player1;
-                    should_delete = true;
+                if (lobby->player2 && lobby->player2->disconnected) {
+                    auto time_since_seen = std::chrono::duration_cast<std::chrono::seconds>(
+                        now - lobby->player2->last_seen).count();
+                    if (time_since_seen > LONG_DISCONNECT_THRESHOLD) {
+                        disconnected_player = lobby->player2;
+                        other_player = lobby->player1;
+                        should_delete = true;
+                    }
                 }
             }
 
@@ -187,6 +196,7 @@ void game_server::check_disconnections() {
                     players.erase(other_player->name);
                     delete other_player;
                 }
+                std::cout << "Deleting lobby." << std::endl;
                 delete lobby;
                 it = lobbies.erase(it);
                 continue;
